@@ -1,70 +1,94 @@
 #!/usr/bin/env python3
 import sys
 import typing
+from dataclasses import dataclass
 
-# read numbers
-numbers = [int(num) for num in sys.stdin.readline().split(',')]
+T = typing.TypeVar('T')
 
-# read boards
-# stored row major (rows are contiguous)
+class Grid(typing.Generic[T]):
+    def __init__(self, default_value: T) -> None:
+        self.values = [default_value] * 25
 
-boards = []
-for line in sys.stdin:
-    line = line.strip()
-    if line:
-        row = [int(num) for num in line.split()]
-        assert len(row) == 5
-        boards[-1].extend(row)
-    else:
-        if boards:
-            assert len(boards[-1]) == 25
-        boards.append([])
+    def __getitem__(self, key: typing.Tuple[int, int]) -> T:
+        assert key[0] in range(5) and key[1] in range(5)
+        return self.values[key[0] * 5 + key[1]]
 
-assert len(boards[-1]) == 25
+    def __setitem__(self, key: typing.Tuple[int, int], value: T) -> None:
+        assert key[0] in range(5) and key[1] in range(5)
+        self.values[key[0] * 5 + key[1]] = value
 
-# evaluate boards
+class Board(Grid[int]):
+    def __init__(self) -> None:
+        super().__init__(0)
 
-def mark_board(board: list[int], numbers: list[int]) -> list[bool]:
-    marked = [False] * 25
-    for num in numbers:
-        for i, board_num in enumerate(board):
-            if board_num == num:
-                marked[i] = True
+class Marking(Grid[int]):
+    def __init__(self) -> None:
+        super().__init__(False)
+
+@dataclass
+class BoardState:
+    board: Board
+    marking: Marking
+    won: bool
+
+def read_input(input: typing.TextIO) -> typing.Tuple[list[int], list[Board]]:
+    numbers = [int(num) for num in input.readline().split(',')]
+    boards: list[Board] = []
+    row = 0
+    for line in input:
+        line = line.strip()
+        if line:
+            tokens = line.split()
+            assert len(tokens) == 5
+            for col, token in enumerate(tokens):
+                boards[-1][row, col] = int(token)
+            row += 1
+        else:
+            if boards:
+                assert row == 5
+                row = 0
+            boards.append(Board())
+    assert row == 5
+    return numbers, boards
+
+def mark_board(board: Board, marking: Marking, number: int) -> bool:
+    marked = False
+    for row in range(5):
+        for col in range(5):
+            if board[row, col] == number:
+                marking[row, col] = True
+                marked = True
     return marked
 
-def row_all_marked(marked: list[bool], row: int) -> bool:
-    return all(marked[row * 5 + col] for col in range(5))
-
-def col_all_marked(marked: list[bool], col: int) -> bool:
-    return all(marked[row * 5 + col] for row in range(5))
-
-def board_wins(marked: list[bool]) -> bool:
-    if any(row_all_marked(marked, row) for row in range(5)):
+def marking_wins(marking: Marking) -> bool:
+    if any(all(marking[row, col] for col in range(5)) for row in range(5)):
         return True
-    if any(col_all_marked(marked, col) for col in range(5)):
+    if any(all(marking[row, col] for row in range(5)) for col in range(5)):
         return True
     return False
 
-def board_score(board: list[int], marked: list[bool]) -> bool:
-    return sum(num for i, num in enumerate(board) if not marked[i])
+def score_board(board: Board, marking: Marking, number: int) -> int:
+    score = 0
+    for row in range(5):
+        for col in range(5):
+            if not marking[row, col]:
+                score += board[row, col]
+    return score * number
 
-def eval_board(board: list[int], numbers: list[int]) -> typing.Optional[int]:
-    marked = mark_board(board, numbers)
-    return board_score(board, marked) * numbers[-1] if board_wins(marked) else None
+def main():
+    numbers, boards = read_input(sys.stdin)
+    board_states = [BoardState(board, Marking(), won=False) for board in boards]
+    for number in numbers:
+        print(f'calling {number}')
+        for b, state in enumerate(board_states):
+            if state.won:
+                continue
+            if mark_board(state.board, state.marking, number) and marking_wins(state.marking):
+                score = score_board(state.board, state.marking, number)
+                print(f'board {b} won with score {score}')
+                state.won = True
+        if all(state.won for state in board_states):
+            break
 
-def eval_boards(boards: list[list[int]], numbers: list[int]) -> typing.List[typing.Tuple[int, int]]:
-    winners = []
-    for i, board in enumerate(boards):
-        score = eval_board(board, numbers)
-        if score is not None:
-            winners.append((i, score))
-    return winners
-
-for i in range(1, len(numbers)):
-    print(f'eval_boards with {i} numbers')
-    winners = eval_boards(boards, numbers[0:i])
-    if winners:
-        for winner in winners:
-            print(f'board {winner[0]} won with score {winner[1]}')
-        boards = [board for i, board in enumerate(boards) if not any(w[0] == i for w in winners)]
-        print(f'{len(boards)} left')
+if __name__ == '__main__':
+    main()
