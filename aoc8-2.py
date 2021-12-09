@@ -113,12 +113,9 @@ def solve(patterns: typing.List[Bits]) -> typing.Dict[Bits, Bits]:
 	assert len(e) == 1
 
 	# Step 6
-	found = [o for o in by_len[6] if o & (a | bcdf) != (a | bcdf)]
-	assert len(found) == 2
-	if found[0] & c:
-		abcefg, abdefg = found
-	else:
-		abdefg, abcefg = found
+	found = [o for o in by_len[6] if o & (a | bcdf) != (a | bcdf) and o & c]
+	assert len(found) == 1
+	abcefg = found[0]
 
 	bc = abcefg ^ a ^ e ^ f ^ g
 	b = bc ^ c
