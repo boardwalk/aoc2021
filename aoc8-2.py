@@ -1,86 +1,107 @@
 #!/usr/bin/env python3
-import sys
 import math
+import sys
 import typing
 
 PART2 = True
 
-def bitlen(value: int) -> int:
-	return sum(1 for i in range(7) if value & (1 << i))
-
-class ConnState:
+class Bits:
 	__slots__ = ('value',)
-	def __init__(self, letters: str) -> None:
-		self.value = 0
+
+	@staticmethod
+	def from_letters(letters: str) -> 'Bits':
+		value = 0
 		for letter in letters:
 			segment = ord(letter) - ord('a')
-			self.value |= 1 << segment
+			value |= 1 << segment
+		return Bits(value)
+
+	def __init__(self, value: int) -> None:
+		self.value = value
+
+	def __xor__(self, other: 'Bits') -> 'Bits':
+		return Bits(self.value ^ other.value)
+
+	def __and__(self, other: 'Bits') -> 'Bits':
+		return Bits(self.value & other.value)
+
+	def __or__(self, other: 'Bits') -> 'Bits':
+		return Bits(self.value | other.value)
+
+	def __hash__(self) -> int:
+		return hash(self.value)
+
+	def __eq__(self, other: 'Bits') -> bool:
+		return self.value == other.value
+
+	def __nonzero__(self) -> bool:
+		return self.value != 0
 
 	def __repr__(self) -> str:
 		return f'{self.value:07b}'
 
+	def __len__(self) -> int:
+		return sum(1 for i in range(7) if self.value & (1 << i))
+
+	def log2(self) -> int:
+		return int(math.log(self.value) / math.log(2))
+
 INPUT_DIGITS = [
-	ConnState('abcefg'), # 0
-	ConnState('cf'), # 1
-	ConnState('acdeg'), # 2
-	ConnState('acdfg'), # 3
-	ConnState('bcdf'), # 4
-	ConnState('abdfg'), # 5
-	ConnState('abdefg'), # 6
-	ConnState('acf'), # 7
-	ConnState('abcdefg'), # 8
-	ConnState('abcdfg') # 9
+	Bits.from_letters('abcefg'),
+	Bits.from_letters('cf'),
+	Bits.from_letters('acdeg'),
+	Bits.from_letters('acdfg'),
+	Bits.from_letters('bcdf'),
+	Bits.from_letters('abdfg'),
+	Bits.from_letters('abdefg'),
+	Bits.from_letters('acf'),
+	Bits.from_letters('abcdefg'),
+	Bits.from_letters('abcdfg')
 ]
 
-def log2(val: int) -> int:
-	return int(math.log(val) / math.log(2))
-
-def solve(outputs: typing.List[ConnState]) -> typing.Dict[int, int]:
+def solve(patterns: typing.List[Bits]) -> typing.Dict[Bits, Bits]:
+	"""
+	Given all ten patterns of a display, calculate the mapping from the input to the scrambled output. e.g. a Bit.from_letters('a') => Bit.from_letters('c') means segment a should have lit up, but segment c actually did (and hence to unscramble you must go from c to a).
+	"""
 	by_len = {}
-	for output in outputs:
+	for pattern in patterns:
 		try:
-			by_len[bitlen(output.value)].append(output)
+			by_len[len(pattern)].append(pattern)
 		except KeyError:
-			by_len[bitlen(output.value)] = [output]
+			by_len[len(pattern)] = [pattern]
 
-	assert len(by_len[2]) == 1
-	assert len(by_len[3]) == 1
-	assert len(by_len[4]) == 1
-	assert len(by_len[5]) == 3
-	assert len(by_len[6]) == 3
-	assert len(by_len[7]) == 1
+	assert {k: len(v) for k, v in by_len.items()} == {2: 1, 3: 1, 4: 1, 5: 3, 6: 3, 7: 1}
 
-	# These are easy we only have one of each length
-	cf = by_len[2][0].value
-	acf = by_len[3][0].value
-	bcdf = by_len[4][0].value
+	# These are easy, we only have one of each length
+	cf = by_len[2][0]
+	acf = by_len[3][0]
+	bcdf = by_len[4][0]
 
 	# Step 1
 	a = acf ^ cf
-	assert bitlen(a) == 1
+	assert len(a) == 1
 
 	# Step 2
 	bd = bcdf ^ cf
-	assert bitlen(bd) == 2
+	assert len(bd) == 2
 
 	# Step 3
-	found = [o.value for o in by_len[6] if o.value & (a | bcdf) == (a | bcdf)]
+	found = [o for o in by_len[6] if o & (a | bcdf) == (a | bcdf)]
 	assert len(found) == 1
 	abcdfg = found[0]
 	g = abcdfg ^ a ^ bcdf
-	assert bitlen(g) == 1
+	assert len(g) == 1
 
 	# Step 4
-	found = [o.value for o in by_len[5] if o.value & (a | bd) == (a | bd)]
+	found = [o for o in by_len[5] if o & (a | bd) == (a | bd)]
 	assert len(found) == 1
 	abdfg = found[0]
 	f = abdfg ^ a ^ bd ^ g
 	c = cf ^ f
-	assert bitlen(f) == 1
-	assert bitlen(c) == 1
+	assert len(f) == 1 and len(c) == 1
 
 	# Step 5
-	found = [o.value for o in by_len[5] if o.value != abdfg]
+	found = [o for o in by_len[5] if o != abdfg]
 	assert len(found) == 2
 	if found[0] & f:
 		acdfg, acdeg = found
@@ -89,10 +110,10 @@ def solve(outputs: typing.List[ConnState]) -> typing.Dict[int, int]:
 
 	acdg = acdfg ^ f
 	e = acdeg ^ acdg
-	assert bitlen(e) == 1
+	assert len(e) == 1
 
 	# Step 6
-	found = [o.value for o in by_len[6] if o.value & (a | bcdf) != (a | bcdf)]
+	found = [o for o in by_len[6] if o & (a | bcdf) != (a | bcdf)]
 	assert len(found) == 2
 	if found[0] & c:
 		abcefg, abdefg = found
@@ -102,56 +123,36 @@ def solve(outputs: typing.List[ConnState]) -> typing.Dict[int, int]:
 	bc = abcefg ^ a ^ e ^ f ^ g
 	b = bc ^ c
 	d = bd ^ b
+	assert len(b) == 1 and len(d) == 1
 
-	# print(f'a       = {a:07b}')
-	# print(f'b       = {b:07b}')
-	# print(f'c       = {c:07b}')
-	# print(f'd       = {c:07b}')
-	# print(f'e       = {e:07b}')
-	# print(f'f       = {f:07b}')
-	# print(f'g       = {g:07b}')
+	return {Bits(1 << i): x for i, x in enumerate((a, b, c, d, e, f, g))}
 
-	return { 
-		0: log2(a),
-		1: log2(b),
-		2: log2(c),
-		3: log2(d),
-		4: log2(e),
-		5: log2(f),
-		6: log2(g),
-	}
+def unscramble(scrambled: Bits, mapping: typing.Dict[Bits, Bits]) -> Bits:
+	unscrambled = Bits(0)
+	for good, bad in mapping.items():
+		if scrambled & bad:
+			unscrambled |= good
+	return unscrambled
 
-def fix(cs: ConnState, mapping: typing.Dict[int, int]) -> int:
-	value = 0
-	for new, old in mapping.items():
-		if cs.value & (1 << old):
-			value |= (1 << new)
-
+def bits_to_digit(unscrambled: Bits) -> int:
 	for i, digit in enumerate(INPUT_DIGITS):
-		if digit.value == value:
+		if digit == unscrambled:
 			return i
-
 	raise RuntimeError('No matching digit!')
 
 def main() -> None:
 	result = 0
 
 	for line in sys.stdin:
-		patterns, output = line.split('|')
-		patterns = [ConnState(token) for token in patterns.split()]
-		output = [ConnState(token) for token in output.split()]
+		patterns, outputs = line.split('|')
+		patterns = [Bits.from_letters(token) for token in patterns.split()]
+		outputs = [Bits.from_letters(token) for token in outputs.split()]
 		mapping = solve(patterns)
-		fixed_output = [fix(cs, mapping) for cs in output]
+		digits = [bits_to_digit(unscramble(output, mapping)) for output in outputs]
 		if PART2:
-			result += fixed_output[0] * 1000 + fixed_output[1] * 100 + fixed_output[2] * 10 + fixed_output[3]
+			result += digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3]
 		else:
-			result += sum(1 for o in fixed_output if o in (1, 4, 7, 8))
-		# print(patterns)
-		# print(output)
-		# print(mapping)
-		# print(fixed_output)
-		# if True:
-		# 	break
+			result += sum(1 for o in digits if o in (1, 4, 7, 8))
 
 	print(result)
 
