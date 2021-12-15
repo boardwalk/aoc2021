@@ -99,9 +99,9 @@ fn main() -> Result<(), Error> {
     for y in 0..=max_dot_y {
         for x in 0..=max_dot_x {
             if dots.contains(&(x, y)) {
-                print!("x");
-            } else {
                 print!(".");
+            } else {
+                print!(" ");
             }
         }
 
