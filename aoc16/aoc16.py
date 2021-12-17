@@ -2,16 +2,9 @@
 import binascii
 import sys
 from functools import reduce
-from dataclasses import dataclass
 
 PART2 = True
 version_sum = 0
-
-@dataclass
-class Packet:
-    version: int
-    type: int
-
 
 class BitReader:
     def __init__(self, hex_data: str) -> None:
@@ -19,7 +12,6 @@ class BitReader:
         self._position = 0
 
     def read(self, num_bits: int) -> int:
-        # print('====')
         result = 0
 
         while num_bits > 0:
