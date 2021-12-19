@@ -4,11 +4,12 @@
 use anyhow::{anyhow, Error};
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::HashSet;
 use std::io::{stdin, BufRead};
 use std::ops::{Add, Sub};
 use std::str::FromStr as _;
 
-#[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Eq, Ord)]
+#[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Eq, Ord, Hash)]
 struct Beacon {
     x: i32,
     y: i32,
@@ -125,8 +126,18 @@ struct Transform {
 }
 
 impl Transform {
+    fn make_identity() -> Self {
+        Transform { m: [1, 0, 0, 0, /**/ 0, 1, 0, 0, /**/ 0, 0, 1, 0, /**/ 0, 0, 0, 1] }
+    }
+
     fn make_translation(offset: Offset) -> Self {
         Transform { m: [1, 0, 0, offset.x, /**/ 0, 1, 0, offset.y, /**/ 0, 0, 1, offset.z, /**/ 0, 0, 0, 1] }
+    }
+
+    fn invert(&self) -> Transform {
+        // FIXME
+        // println!("INVERT NOT IMPLEMENTED!");
+        return Transform::make_identity();
     }
 
     // When applied, the resulting Transform will do 'xform' FOLLOWED BY 'self'
@@ -225,6 +236,69 @@ fn align_scanners(scanner_a: &Scanner, scanner_b: &Scanner, xforms: &[Transform]
     None
 }
 
+struct Alignment {
+    i: usize,
+    j: usize,
+    xform: Transform, // applying xform to a coordinate in coord space j puts it into coord space i
+}
+
+fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, to: usize) -> Option<Vec<(usize, usize)> > {
+    if from == to {
+        return Some(path.clone());
+    }
+
+    for alignment in alignments.iter() {
+        if path.iter().find(|(i, j)| *i == alignment.i && *j == alignment.j).is_some() {
+            continue;
+        }
+
+        if alignment.i == from {
+            println!("path elem ({}, {}) for from={} to={} is inverted", alignment.i, alignment.j, from, to);
+
+            let mut new_path = path.clone();
+            new_path.push((alignment.i, alignment.j));
+
+            let final_path = find_path(alignments, &new_path, alignment.j, to);
+            if final_path.is_some() {
+                return final_path;
+            }
+        }
+
+        if alignment.j == from {
+            println!("path elem ({}, {}) for from={} to={} is normal", alignment.i, alignment.j, from, to);
+
+            let mut new_path = path.clone();
+            new_path.push((alignment.i, alignment.j));
+
+            let final_path = find_path(alignments, &new_path, alignment.i, to);
+            if final_path.is_some() {
+                return final_path;
+            }
+        }
+    }
+
+    None
+}
+
+fn combine_xform(alignments: &[Alignment], path: &[(usize, usize)], mut from: usize) -> Transform {
+    let mut xform = Transform::make_identity();
+
+    for (i, j) in path.iter() {
+        let alignment = alignments.iter().find(|a| a.i == *i && a.j == *j).unwrap();
+        if from == *i {
+            xform = alignment.xform.invert().combine(&xform);
+            from = *j;
+        } else if from == *j {
+            xform = alignment.xform.combine(&xform);
+            from = *i;
+        } else {
+            panic!("unexpected element in path");
+        }
+    }
+
+    xform
+}
+
 fn main() -> Result<(), Error> {
     let scanners = read_scanners(stdin().lock())?;
     let xforms = Transform::all();
@@ -234,13 +308,40 @@ fn main() -> Result<(), Error> {
     for i in 0..scanners.len() {
         for j in i + 1..scanners.len() {
             if let Some(xform) = align_scanners(&scanners[i], &scanners[j], &xforms, &mut beacons_tmp) {
-                println!("aligned {} to {}", scanners[i].num, scanners[j].num);
-                alignments.push((i, j, xform));
+                // println!("aligned {} to {}", i, j);
+                alignments.push(Alignment { i, j, xform });
             }
         }
     }
 
-    println!("{:?}", alignments);
+    // println!("alignments: {:?}", alignments);
+
+    let mut final_xforms = Vec::new();
+
+    for i in 0..scanners.len() {
+        let initial_path = Vec::new();
+        let final_path = find_path(&alignments, &initial_path, i, 0).ok_or_else(|| anyhow!("failed to find path from {} to 0", i))?;
+        final_xforms.push(combine_xform(&alignments, &final_path, i));
+    }
+
+    // println!("final_xforms: {:?}", final_xforms);
+
+    let mut combined_beacons = HashSet::new();
+    for i in 0..scanners.len() {
+        for beacon in scanners[i].beacons.iter() {
+            combined_beacons.insert(final_xforms[i].apply(beacon));
+        }
+    }
+
+    // println!("combined_beacons: {:?}", combined_beacons);
+    // println!("count: {:?}", combined_beacons.len());
+
+    let mut combined_beacons_vec = combined_beacons.iter().collect::<Vec<_>>();
+    combined_beacons_vec.sort();
+
+    for beacon in combined_beacons_vec.iter() {
+        println!("{},{},{}", beacon.x, beacon.y, beacon.z);
+    }
 
     Ok(())
 }
