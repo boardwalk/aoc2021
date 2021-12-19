@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
-
 use anyhow::{anyhow, Error};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -70,7 +67,6 @@ impl Sub<Beacon> for Beacon {
 
 #[derive(Debug)]
 struct Scanner {
-    num: i32,
     beacons: Vec<Beacon>,
 }
 
@@ -91,32 +87,24 @@ impl Scanner {
         let captures = RE.captures(line_trim).ok_or_else(|| anyhow!("Failed to match Scanner line"))?;
 
         let num_str = captures.get(1).unwrap().as_str();
-        let num = i32::from_str(num_str).unwrap();
+        let _num = i32::from_str(num_str).unwrap();
 
         let mut beacons = Vec::new();
-        loop {
-            let beacon = match Beacon::from_reader(&mut reader)? {
-                Some(beacon) => beacon,
-                None => break,
-            };
 
+        while let Some(beacon) = Beacon::from_reader(&mut reader)? {
             beacons.push(beacon);
         }
 
         beacons.sort();
 
-        Ok(Some(Scanner { num, beacons }))
+        Ok(Some(Scanner { beacons }))
     }
 }
 
 fn read_scanners<R: BufRead>(mut reader: R) -> Result<Vec<Scanner>, Error> {
     let mut scanners = Vec::new();
-    loop {
-        let scanner = match Scanner::from_reader(&mut reader)? {
-            Some(scanner) => scanner,
-            None => break,
-        };
 
+    while let Some(scanner) = Scanner::from_reader(&mut reader)? {
         scanners.push(scanner);
     }
 
@@ -153,7 +141,7 @@ impl Rotation {
             for idx in result.len() - 6..result.len() {
                 for axis in 0..3 {
                     if neg & (1 << axis) != 0 {
-                        result[idx].m[axis * 3 + 0] = -result[idx].m[axis * 3 + 0];
+                        result[idx].m[axis * 3] = -result[idx].m[axis * 3];
                         result[idx].m[axis * 3 + 1] = -result[idx].m[axis * 3 + 1];
                         result[idx].m[axis * 3 + 2] = -result[idx].m[axis * 3 + 2];
                     }
@@ -246,16 +234,17 @@ impl Transform for Compound {
     }
 
     fn dup(&self) -> Box<dyn Transform> {
-        Box::new(Compound { transforms: self.transforms.iter().map(|transform| transform.dup()).collect() })
+        let transforms = self.transforms.iter().map(|transform| transform.dup()).collect();
+        Box::new(Compound { transforms })
     }
 }
 
 fn check_alignment(beacons_a: &[Beacon], beacons_b: &[Beacon], off: Offset) -> bool {
     let mut num_aligned = 0;
 
-    for ai in 0..beacons_a.len() {
-        for bi in 0..beacons_b.len() {
-            if beacons_a[ai] == beacons_b[bi] + off {
+    for ba in beacons_a.iter() {
+        for bb in beacons_b.iter() {
+            if *ba == *bb + off {
                 num_aligned += 1;
                 break;
             }
@@ -276,7 +265,7 @@ fn align_scanners(scanner_a: &Scanner, scanner_b: &Scanner, rotations: &[Rotatio
         for ai in 0..scanner_a.beacons.len() {
             for bi in 0..beacons_tmp.len() {
                 let off = scanner_a.beacons[ai] - beacons_tmp[bi];
-                if check_alignment(&scanner_a.beacons, &beacons_tmp, off) {
+                if check_alignment(&scanner_a.beacons, beacons_tmp, off) {
                     let mut compound = Compound::new();
                     compound.push(Box::new(*rotation));
                     compound.push(Box::new(Translation::new(off)));
@@ -295,13 +284,13 @@ struct Alignment {
     transform: Compound, // applying transform to a coordinate in coord space j puts it into coord space i
 }
 
-fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, to: usize) -> Option<Vec<(usize, usize)> > {
+fn find_path(alignments: &[Alignment], path: &[(usize, usize)], from: usize, to: usize) -> Option<Vec<(usize, usize)> > {
     if from == to {
-        return Some(path.clone());
+        return Some(path.to_vec());
     }
 
     for alignment in alignments.iter() {
-        if path.iter().find(|(i, j)| *i == alignment.i && *j == alignment.j).is_some() {
+        if path.iter().any(|(i, j)| *i == alignment.i && *j == alignment.j) {
             continue;
         }
 
@@ -313,7 +302,7 @@ fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, 
             continue
         };
 
-        let mut new_path = path.clone();
+        let mut new_path = path.to_vec();
         new_path.push((alignment.i, alignment.j));
 
         let final_path = find_path(alignments, &new_path, new_from, to);
@@ -398,13 +387,6 @@ fn main() -> Result<(), Error> {
 
         // println!("combined_beacons: {:?}", combined_beacons);
         println!("count: {:?}", combined_beacons.len());
-
-        let mut combined_beacons_vec = combined_beacons.iter().collect::<Vec<_>>();
-        combined_beacons_vec.sort();
-
-        for beacon in combined_beacons_vec.iter() {
-            println!("{},{},{}", beacon.x, beacon.y, beacon.z);
-        }
     }
 
     Ok(())
