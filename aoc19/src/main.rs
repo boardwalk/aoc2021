@@ -4,12 +4,13 @@
 use anyhow::{anyhow, Error};
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::cmp::max;
 use std::collections::HashSet;
 use std::io::{stdin, BufRead};
 use std::ops::{Add, Sub};
 use std::str::FromStr as _;
 
-const PART2: bool = false;
+const PART2: bool = true;
 
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Eq, Ord, Hash)]
 struct Beacon {
@@ -367,7 +368,22 @@ fn main() -> Result<(), Error> {
     }
 
     if PART2 {
-        // TODO
+        let mut max_manhattan_dist = 0;
+
+        for i in 0..scanners.len() {
+            for j in i + 1..scanners.len() {
+                let initial_path = Vec::new();
+                let final_path = find_path(&alignments, &initial_path, i, j).ok_or_else(|| anyhow!("failed to find path from {} to {}", i, j))?;
+                let xform = combine_xform(&alignments, &final_path, i);
+                let beacon_before = Beacon { x: 0, y: 0, z: 0 };
+                let beacon_after = xform.apply(&beacon_before);
+                let off = beacon_after - beacon_before;
+                let manhattan_dist = off.x.abs() + off.y.abs() + off.z.abs();
+                max_manhattan_dist = max(manhattan_dist, max_manhattan_dist);
+            }
+        }
+
+        println!("max_manhattan_dist: {:?}", max_manhattan_dist);
     } else {
         // println!("alignments: {:?}", alignments);
 
