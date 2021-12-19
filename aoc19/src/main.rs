@@ -9,6 +9,8 @@ use std::io::{stdin, BufRead};
 use std::ops::{Add, Sub};
 use std::str::FromStr as _;
 
+const PART2: bool = false;
+
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Eq, Ord, Hash)]
 struct Beacon {
     x: i32,
@@ -120,83 +122,130 @@ fn read_scanners<R: BufRead>(mut reader: R) -> Result<Vec<Scanner>, Error> {
     Ok(scanners)
 }
 
-#[derive(Debug)]
-struct Transform {
-    m: [i32; 16], // row-major (first row is at 0, 1, 2, 3)
+trait BeaconOp {
+    fn apply(&self, beacon: &Beacon) -> Beacon;
+    fn invert(&self) -> Box<dyn BeaconOp>;
+    fn dup(&self) -> Box<dyn BeaconOp>;
 }
 
-impl Transform {
-    fn make_identity() -> Self {
-        Transform { m: [1, 0, 0, 0, /**/ 0, 1, 0, 0, /**/ 0, 0, 1, 0, /**/ 0, 0, 0, 1] }
-    }
+#[derive(Debug, Clone, Copy)]
+struct Rotation {
+    m: [i32; 9], // row-major (first row is at 0, 1, 2)
+}
 
-    fn make_translation(offset: Offset) -> Self {
-        Transform { m: [1, 0, 0, offset.x, /**/ 0, 1, 0, offset.y, /**/ 0, 0, 1, offset.z, /**/ 0, 0, 0, 1] }
-    }
-
-    fn invert(&self) -> Transform {
-        // FIXME
-        // println!("INVERT NOT IMPLEMENTED!");
-        return Transform::make_identity();
-    }
-
-    // When applied, the resulting Transform will do 'xform' FOLLOWED BY 'self'
-    fn combine(&self, xform: &Transform) -> Transform {
-        let mut result = Transform { m: [0; 16] };
-
-        for r in 0..4 {
-            for c in 0..4 {
-                let mut val = 0;
-                for i in 0..4 {
-                    val += self.m[r * 4 + i] * xform.m[i * 4 + c];
-                }
-
-                result.m[r * 4 + c] = val;
-            }
-        }
-
-        result
-    }
-
-    fn apply(&self, beacon: &Beacon) -> Beacon {
-        // C = A * B
-        // A is m x n (3 x 3) (raws x cols)
-        // B is n x p (3 x 1)
-        let beacon_w = 1;
-        let x = beacon.x * self.m[0] + beacon.y * self.m[1] + beacon.z * self.m[2] + beacon_w * self.m[3];
-        let y = beacon.x * self.m[4] + beacon.y * self.m[5] + beacon.z * self.m[6] + beacon_w * self.m[7];
-        let z = beacon.x * self.m[8] + beacon.y * self.m[9] + beacon.z * self.m[10] + beacon_w * self.m[11];
-        let _w = beacon.x * self.m[12] + beacon.y * self.m[13] + beacon.z * self.m[14] + beacon_w * self.m[15];
-        Beacon { x, y, z }
-    }
-
-    fn all() -> Vec<Transform> {
+impl Rotation {
+    fn all() -> Vec<Rotation> {
         let mut result = Vec::new();
 
         // This produces 8 * 6 = 48 transforms while the problem says that there are 24.
         // So some of these don't make sense, and hopefully the bad transforms don't actually end up aligning.
         for neg in 0..8 {
-            result.push(Transform { m: [1, 0, 0, 0, /**/ 0, 1, 0, 0, /**/ 0, 0, 1, 0, /**/ 0, 0, 0, 1] }); // x->x, y->y, z->z
-            result.push(Transform { m: [1, 0, 0, 0, /**/ 0, 0, 1, 0, /**/ 0, 1, 0, 0, /**/ 0, 0, 0, 1] }); // x->x, y->z, z->y
+            result.push(Rotation { m: [1, 0, 0, /**/ 0, 1, 0, /**/ 0, 0, 1] }); // x->x, y->y, z->z
+            result.push(Rotation { m: [1, 0, 0, /**/ 0, 0, 1, /**/ 0, 1, 0] }); // x->x, y->z, z->y
 
-            result.push(Transform { m: [0, 1, 0, 0, /**/ 1, 0, 0, 0, /**/ 0, 0, 1, 0, /**/ 0, 0, 0, 1] }); // x->y, y->x, z->z
-            result.push(Transform { m: [0, 1, 0, 0, /**/ 0, 0, 1, 0, /**/ 1, 0, 0, 0, /**/ 0, 0, 0, 1] }); // x->y, y->z, z->x
+            result.push(Rotation { m: [0, 1, 0, /**/ 1, 0, 0, /**/ 0, 0, 1] }); // x->y, y->x, z->z
+            result.push(Rotation { m: [0, 1, 0, /**/ 0, 0, 1, /**/ 1, 0, 0] }); // x->y, y->z, z->x
 
-            result.push(Transform { m: [0, 0, 1, 0, /**/ 1, 0, 0, 0, /**/ 0, 1, 0, 0, /**/ 0, 0, 0, 1] }); // x->z, y->x, z->y
-            result.push(Transform { m: [0, 0, 1, 0, /**/ 0, 1, 0, 0, /**/ 1, 0, 0, 0, /**/ 0, 0, 0, 1] }); // x->z, y->y, z->x
+            result.push(Rotation { m: [0, 0, 1, /**/ 1, 0, 0, /**/ 0, 1, 0] }); // x->z, y->x, z->y
+            result.push(Rotation { m: [0, 0, 1, /**/ 0, 1, 0, /**/ 1, 0, 0] }); // x->z, y->y, z->x
 
             for idx in result.len() - 6..result.len() {
                 for axis in 0..3 {
                     if neg & (1 << axis) != 0 {
-                        result[idx].m[axis * 4 + 0] = -result[idx].m[axis * 4 + 0];
-                        result[idx].m[axis * 4 + 1] = -result[idx].m[axis * 4 + 1];
-                        result[idx].m[axis * 4 + 2] = -result[idx].m[axis * 4 + 2];
+                        result[idx].m[axis * 3 + 0] = -result[idx].m[axis * 3 + 0];
+                        result[idx].m[axis * 3 + 1] = -result[idx].m[axis * 3 + 1];
+                        result[idx].m[axis * 3 + 2] = -result[idx].m[axis * 3 + 2];
                     }
                 }
             }
         }
 
         result
+    }
+}
+
+impl BeaconOp for Rotation {
+    fn apply(&self, beacon: &Beacon) -> Beacon {
+        let x = beacon.x * self.m[0] + beacon.y * self.m[1] + beacon.z * self.m[2];
+        let y = beacon.x * self.m[3] + beacon.y * self.m[4] + beacon.z * self.m[5];
+        let z = beacon.x * self.m[6] + beacon.y * self.m[7] + beacon.z * self.m[8];
+        Beacon { x, y, z }
+    }
+
+    fn invert(&self) -> Box<dyn BeaconOp> {
+        let mut result = Rotation { m: [0; 9] };
+
+        for r in 0..3 {
+            for c in 0..3 {
+                result.m[c * 3 + r] = self.m[r * 3 + c];
+            }
+        }
+
+        Box::new(result)
+    }
+
+    fn dup(&self) -> Box<dyn BeaconOp> {
+        Box::new(*self)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Translation {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+impl Translation {
+    fn new(off: Offset) -> Self {
+        Translation { x: off.x, y: off.y, z: off.z }
+    }
+}
+
+impl BeaconOp for Translation {
+    fn apply(&self, beacon: &Beacon) -> Beacon {
+        let x = beacon.x + self.x;
+        let y = beacon.y + self.y;
+        let z = beacon.z + self.z;
+        Beacon { x, y, z }
+    }
+
+    fn invert(&self) -> Box<dyn BeaconOp> {
+        let result = Translation { x: -self.x, y: -self.y, z: -self.z };
+        Box::new(result)
+    }
+
+    fn dup(&self) -> Box<dyn BeaconOp> {
+        Box::new(*self)
+    }
+}
+
+struct Compound {
+    ops: Vec<Box<dyn BeaconOp>>,
+}
+
+impl Compound {
+    fn new() -> Self {
+        Self { ops: Vec::new() }
+    }
+
+    fn push(&mut self, op: Box<dyn BeaconOp>) {
+        self.ops.push(op);
+    }
+}
+
+impl BeaconOp for Compound {
+    fn apply(&self, beacon: &Beacon) -> Beacon {
+        self.ops.iter().fold(*beacon, |b, op| op.apply(&b))
+    }
+
+    fn invert(&self) -> Box<dyn BeaconOp> {
+        let ops = self.ops.iter().rev().map(|op| op.invert()).collect();
+        Box::new(Compound { ops })
+    }
+
+    fn dup(&self) -> Box<dyn BeaconOp> {
+        Box::new(Compound { ops: self.ops.iter().map(|op| op.dup()).collect() })
     }
 }
 
@@ -215,19 +264,22 @@ fn check_alignment(beacons_a: &[Beacon], beacons_b: &[Beacon], off: Offset) -> b
     num_aligned >= 12
 }
 
-fn align_scanners(scanner_a: &Scanner, scanner_b: &Scanner, xforms: &[Transform], beacons_tmp: &mut Vec<Beacon>) -> Option<Transform> {
-    for (xform_i, xform) in xforms.iter().enumerate() {
+fn align_scanners(scanner_a: &Scanner, scanner_b: &Scanner, rotations: &[Rotation], beacons_tmp: &mut Vec<Beacon>) -> Option<Compound> {
+    for rotation in rotations.iter() {
         beacons_tmp.clear();
 
         for beacon in scanner_b.beacons.iter() {
-            beacons_tmp.push(xform.apply(beacon));
+            beacons_tmp.push(rotation.apply(beacon));
         }
 
         for ai in 0..scanner_a.beacons.len() {
             for bi in 0..beacons_tmp.len() {
                 let off = scanner_a.beacons[ai] - beacons_tmp[bi];
                 if check_alignment(&scanner_a.beacons, &beacons_tmp, off) {
-                    return Some(Transform::make_translation(off).combine(xform));
+                    let mut compound = Compound::new();
+                    compound.push(Box::new(*rotation));
+                    compound.push(Box::new(Translation::new(off)));
+                    return Some(compound);
                 }
             }
         }
@@ -239,7 +291,7 @@ fn align_scanners(scanner_a: &Scanner, scanner_b: &Scanner, xforms: &[Transform]
 struct Alignment {
     i: usize,
     j: usize,
-    xform: Transform, // applying xform to a coordinate in coord space j puts it into coord space i
+    op: Box<dyn BeaconOp>, // applying xform to a coordinate in coord space j puts it into coord space i
 }
 
 fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, to: usize) -> Option<Vec<(usize, usize)> > {
@@ -253,7 +305,7 @@ fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, 
         }
 
         if alignment.i == from {
-            println!("path elem ({}, {}) for from={} to={} is inverted", alignment.i, alignment.j, from, to);
+            // println!("path elem ({}, {}) for from={} to={} is inverted", alignment.i, alignment.j, from, to);
 
             let mut new_path = path.clone();
             new_path.push((alignment.i, alignment.j));
@@ -265,7 +317,7 @@ fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, 
         }
 
         if alignment.j == from {
-            println!("path elem ({}, {}) for from={} to={} is normal", alignment.i, alignment.j, from, to);
+            // println!("path elem ({}, {}) for from={} to={} is normal", alignment.i, alignment.j, from, to);
 
             let mut new_path = path.clone();
             new_path.push((alignment.i, alignment.j));
@@ -280,67 +332,71 @@ fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, 
     None
 }
 
-fn combine_xform(alignments: &[Alignment], path: &[(usize, usize)], mut from: usize) -> Transform {
-    let mut xform = Transform::make_identity();
+fn combine_xform(alignments: &[Alignment], path: &[(usize, usize)], mut from: usize) -> Compound {
+    let mut compound = Compound::new();
 
     for (i, j) in path.iter() {
         let alignment = alignments.iter().find(|a| a.i == *i && a.j == *j).unwrap();
         if from == *i {
-            xform = alignment.xform.invert().combine(&xform);
+            compound.push(alignment.op.invert());
             from = *j;
         } else if from == *j {
-            xform = alignment.xform.combine(&xform);
+            compound.push(alignment.op.dup());
             from = *i;
         } else {
             panic!("unexpected element in path");
         }
     }
 
-    xform
+    compound
 }
 
 fn main() -> Result<(), Error> {
     let scanners = read_scanners(stdin().lock())?;
-    let xforms = Transform::all();
+    let rotations = Rotation::all();
     let mut beacons_tmp = Vec::new();
     let mut alignments = Vec::new();
 
     for i in 0..scanners.len() {
         for j in i + 1..scanners.len() {
-            if let Some(xform) = align_scanners(&scanners[i], &scanners[j], &xforms, &mut beacons_tmp) {
+            if let Some(compound) = align_scanners(&scanners[i], &scanners[j], &rotations, &mut beacons_tmp) {
                 // println!("aligned {} to {}", i, j);
-                alignments.push(Alignment { i, j, xform });
+                alignments.push(Alignment { i, j, op: Box::new(compound) });
             }
         }
     }
 
-    // println!("alignments: {:?}", alignments);
+    if PART2 {
+        // TODO
+    } else {
+        // println!("alignments: {:?}", alignments);
 
-    let mut final_xforms = Vec::new();
+        let mut final_xforms = Vec::new();
 
-    for i in 0..scanners.len() {
-        let initial_path = Vec::new();
-        let final_path = find_path(&alignments, &initial_path, i, 0).ok_or_else(|| anyhow!("failed to find path from {} to 0", i))?;
-        final_xforms.push(combine_xform(&alignments, &final_path, i));
-    }
-
-    // println!("final_xforms: {:?}", final_xforms);
-
-    let mut combined_beacons = HashSet::new();
-    for i in 0..scanners.len() {
-        for beacon in scanners[i].beacons.iter() {
-            combined_beacons.insert(final_xforms[i].apply(beacon));
+        for i in 0..scanners.len() {
+            let initial_path = Vec::new();
+            let final_path = find_path(&alignments, &initial_path, i, 0).ok_or_else(|| anyhow!("failed to find path from {} to 0", i))?;
+            final_xforms.push(combine_xform(&alignments, &final_path, i));
         }
-    }
 
-    // println!("combined_beacons: {:?}", combined_beacons);
-    // println!("count: {:?}", combined_beacons.len());
+        // println!("final_xforms: {:?}", final_xforms);
 
-    let mut combined_beacons_vec = combined_beacons.iter().collect::<Vec<_>>();
-    combined_beacons_vec.sort();
+        let mut combined_beacons = HashSet::new();
+        for i in 0..scanners.len() {
+            for beacon in scanners[i].beacons.iter() {
+                combined_beacons.insert(final_xforms[i].apply(beacon));
+            }
+        }
 
-    for beacon in combined_beacons_vec.iter() {
-        println!("{},{},{}", beacon.x, beacon.y, beacon.z);
+        // println!("combined_beacons: {:?}", combined_beacons);
+        println!("count: {:?}", combined_beacons.len());
+
+        let mut combined_beacons_vec = combined_beacons.iter().collect::<Vec<_>>();
+        combined_beacons_vec.sort();
+
+        for beacon in combined_beacons_vec.iter() {
+            println!("{},{},{}", beacon.x, beacon.y, beacon.z);
+        }
     }
 
     Ok(())
