@@ -123,10 +123,10 @@ fn read_scanners<R: BufRead>(mut reader: R) -> Result<Vec<Scanner>, Error> {
     Ok(scanners)
 }
 
-trait BeaconOp {
+trait Transform {
     fn apply(&self, beacon: &Beacon) -> Beacon;
-    fn invert(&self) -> Box<dyn BeaconOp>;
-    fn dup(&self) -> Box<dyn BeaconOp>;
+    fn invert(&self) -> Box<dyn Transform>;
+    fn dup(&self) -> Box<dyn Transform>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -165,7 +165,7 @@ impl Rotation {
     }
 }
 
-impl BeaconOp for Rotation {
+impl Transform for Rotation {
     fn apply(&self, beacon: &Beacon) -> Beacon {
         let x = beacon.x * self.m[0] + beacon.y * self.m[1] + beacon.z * self.m[2];
         let y = beacon.x * self.m[3] + beacon.y * self.m[4] + beacon.z * self.m[5];
@@ -173,7 +173,7 @@ impl BeaconOp for Rotation {
         Beacon { x, y, z }
     }
 
-    fn invert(&self) -> Box<dyn BeaconOp> {
+    fn invert(&self) -> Box<dyn Transform> {
         let mut result = Rotation { m: [0; 9] };
 
         for r in 0..3 {
@@ -185,7 +185,7 @@ impl BeaconOp for Rotation {
         Box::new(result)
     }
 
-    fn dup(&self) -> Box<dyn BeaconOp> {
+    fn dup(&self) -> Box<dyn Transform> {
         Box::new(*self)
     }
 }
@@ -203,7 +203,7 @@ impl Translation {
     }
 }
 
-impl BeaconOp for Translation {
+impl Transform for Translation {
     fn apply(&self, beacon: &Beacon) -> Beacon {
         let x = beacon.x + self.x;
         let y = beacon.y + self.y;
@@ -211,42 +211,42 @@ impl BeaconOp for Translation {
         Beacon { x, y, z }
     }
 
-    fn invert(&self) -> Box<dyn BeaconOp> {
+    fn invert(&self) -> Box<dyn Transform> {
         let result = Translation { x: -self.x, y: -self.y, z: -self.z };
         Box::new(result)
     }
 
-    fn dup(&self) -> Box<dyn BeaconOp> {
+    fn dup(&self) -> Box<dyn Transform> {
         Box::new(*self)
     }
 }
 
 struct Compound {
-    ops: Vec<Box<dyn BeaconOp>>,
+    transforms: Vec<Box<dyn Transform>>,
 }
 
 impl Compound {
     fn new() -> Self {
-        Self { ops: Vec::new() }
+        Self { transforms: Vec::new() }
     }
 
-    fn push(&mut self, op: Box<dyn BeaconOp>) {
-        self.ops.push(op);
+    fn push(&mut self, transform: Box<dyn Transform>) {
+        self.transforms.push(transform);
     }
 }
 
-impl BeaconOp for Compound {
+impl Transform for Compound {
     fn apply(&self, beacon: &Beacon) -> Beacon {
-        self.ops.iter().fold(*beacon, |b, op| op.apply(&b))
+        self.transforms.iter().fold(*beacon, |b, transform| transform.apply(&b))
     }
 
-    fn invert(&self) -> Box<dyn BeaconOp> {
-        let ops = self.ops.iter().rev().map(|op| op.invert()).collect();
-        Box::new(Compound { ops })
+    fn invert(&self) -> Box<dyn Transform> {
+        let transforms = self.transforms.iter().rev().map(|transform| transform.invert()).collect();
+        Box::new(Compound { transforms })
     }
 
-    fn dup(&self) -> Box<dyn BeaconOp> {
-        Box::new(Compound { ops: self.ops.iter().map(|op| op.dup()).collect() })
+    fn dup(&self) -> Box<dyn Transform> {
+        Box::new(Compound { transforms: self.transforms.iter().map(|transform| transform.dup()).collect() })
     }
 }
 
@@ -292,7 +292,7 @@ fn align_scanners(scanner_a: &Scanner, scanner_b: &Scanner, rotations: &[Rotatio
 struct Alignment {
     i: usize,
     j: usize,
-    op: Box<dyn BeaconOp>, // applying xform to a coordinate in coord space j puts it into coord space i
+    transform: Compound, // applying transform to a coordinate in coord space j puts it into coord space i
 }
 
 fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, to: usize) -> Option<Vec<(usize, usize)> > {
@@ -305,28 +305,20 @@ fn find_path(alignments: &[Alignment], path: &Vec<(usize, usize)>, from: usize, 
             continue;
         }
 
-        if alignment.i == from {
-            // println!("path elem ({}, {}) for from={} to={} is inverted", alignment.i, alignment.j, from, to);
+        let new_from = if alignment.i == from {
+            alignment.j
+        } else if alignment.j == from {
+            alignment.i
+        } else {
+            continue
+        };
 
-            let mut new_path = path.clone();
-            new_path.push((alignment.i, alignment.j));
+        let mut new_path = path.clone();
+        new_path.push((alignment.i, alignment.j));
 
-            let final_path = find_path(alignments, &new_path, alignment.j, to);
-            if final_path.is_some() {
-                return final_path;
-            }
-        }
-
-        if alignment.j == from {
-            // println!("path elem ({}, {}) for from={} to={} is normal", alignment.i, alignment.j, from, to);
-
-            let mut new_path = path.clone();
-            new_path.push((alignment.i, alignment.j));
-
-            let final_path = find_path(alignments, &new_path, alignment.i, to);
-            if final_path.is_some() {
-                return final_path;
-            }
+        let final_path = find_path(alignments, &new_path, new_from, to);
+        if final_path.is_some() {
+            return final_path;
         }
     }
 
@@ -339,10 +331,10 @@ fn combine_xform(alignments: &[Alignment], path: &[(usize, usize)], mut from: us
     for (i, j) in path.iter() {
         let alignment = alignments.iter().find(|a| a.i == *i && a.j == *j).unwrap();
         if from == *i {
-            compound.push(alignment.op.invert());
+            compound.push(alignment.transform.invert());
             from = *j;
         } else if from == *j {
-            compound.push(alignment.op.dup());
+            compound.push(alignment.transform.dup());
             from = *i;
         } else {
             panic!("unexpected element in path");
@@ -360,9 +352,9 @@ fn main() -> Result<(), Error> {
 
     for i in 0..scanners.len() {
         for j in i + 1..scanners.len() {
-            if let Some(compound) = align_scanners(&scanners[i], &scanners[j], &rotations, &mut beacons_tmp) {
+            if let Some(transform) = align_scanners(&scanners[i], &scanners[j], &rotations, &mut beacons_tmp) {
                 // println!("aligned {} to {}", i, j);
-                alignments.push(Alignment { i, j, op: Box::new(compound) });
+                alignments.push(Alignment { i, j, transform });
             }
         }
     }
