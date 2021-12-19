@@ -9,7 +9,7 @@ use std::str::FromStr as _;
 
 const PART2: bool = true;
 
-#[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Eq, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Beacon {
     x: i32,
     y: i32,
@@ -65,7 +65,6 @@ impl Sub<Beacon> for Beacon {
     }
 }
 
-#[derive(Debug)]
 struct Scanner {
     beacons: Vec<Beacon>,
 }
@@ -94,8 +93,6 @@ impl Scanner {
         while let Some(beacon) = Beacon::from_reader(&mut reader)? {
             beacons.push(beacon);
         }
-
-        beacons.sort();
 
         Ok(Some(Scanner { beacons }))
     }
